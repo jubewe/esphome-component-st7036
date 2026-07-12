@@ -1,0 +1,57 @@
+# Example ESPHome configuration for an EA DOGM163S-A (ST7036, 16x3 chars)
+# wired for 4-wire SPI at 3.3V.
+#
+# Wiring (EA DOGM163 pin -> ESP), per the ST7036 datasheet:
+#   VDD   -> 3.3V
+#   VSS   -> GND
+#   PSB   -> GND         (selects serial mode; tie to VDD instead for parallel)
+#   E     -> VDD (3.3V)  (must be tied high in serial mode)
+#   R/W   -> GND          (not used in serial mode)
+#   RS    -> ESP GPIO     (this is the dc_pin below -- NOT part of the SPI bus)
+#   CSB   -> ESP GPIO     (cs_pin, via the spi_device / display's cs_pin)
+#   DB7 (SI)  -> ESP GPIO (mosi_pin)
+#   DB6 (SCL) -> ESP GPIO (clk_pin)
+#   DB0-DB5   -> not used in serial mode, leave unconnected
+#
+# Adjust the GPIO numbers below to match your wiring.
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [st7036]
+
+esphome:
+  name: dogm163-example
+
+esp32:
+  board: esp32dev
+
+logger:
+api:
+ota:
+  platform: esphome
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+spi:
+  clk_pin: GPIO18   # -> DB6 / SCL
+  mosi_pin: GPIO23  # -> DB7 / SI
+  # No miso_pin: the DOGM/ST7036 SPI interface is write-only.
+
+display:
+  - platform: st7036
+    cs_pin: GPIO5     # -> CSB
+    dc_pin: GPIO17    # -> RS
+    contrast: 35      # 0-63; raise/lower if the display is too light/dark
+    update_interval: 1s
+    lambda: |-
+      it.print(0, 0, "Hello World!");
+      it.printf(0, 1, "Uptime: %.0fs", id(uptime_sensor).state);
+      it.print(0, 2, "Line 3");
+
+sensor:
+  - platform: uptime
+    id: uptime_sensor
+    update_interval: 60s
