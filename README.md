@@ -1,3 +1,6 @@
+# Made with Claude.ai
+
+
 # ESPHome external component: ST7036 (EA DOGM163S-A)
 
 A minimal ESPHome `display` platform for the Sitronix **ST7036** LCD
