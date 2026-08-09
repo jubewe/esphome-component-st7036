@@ -36,6 +36,11 @@ static const uint8_t CMD_ENTRY_MODE_SET = 0x06;  // I/D=1 (increment), S=0 (no s
 static const uint8_t CMD_SET_DDRAM_ADDR = 0x80;
 static const uint8_t CMD_SET_CGRAM_ADDR = 0x40;
 
+// Minimum wait after most ST7036 instructions/data writes before the next
+// one is accepted (datasheet: ~26.3us). Applied after every SPI byte, not
+// just during setup(), since data writes during normal print() need it too.
+static const uint32_t COMMAND_SETTLE_MICROS = 30;
+
 void ST7036Display::setup() {
   ESP_LOGCONFIG(TAG, "Setting up ST7036 LCD...");
 
@@ -57,25 +62,17 @@ void ST7036Display::setup() {
   delay(50);  // internal reset needs >40ms after VDD is stable
 
   this->command_(CMD_FUNCTION_SET_TABLE0);
-  delayMicroseconds(30);
   this->command_(CMD_FUNCTION_SET_TABLE1);
-  delayMicroseconds(30);
   this->command_(CMD_BIAS_SET_3LINE);
-  delayMicroseconds(30);
   this->command_(power_icon_contrast_high);
-  delayMicroseconds(30);
   this->command_(contrast_low);
-  delayMicroseconds(30);
   this->command_(CMD_FOLLOWER_CONTROL);
   delay(200);  // datasheet: wait >200ms here for the booster/follower to stabilize
   this->command_(CMD_FUNCTION_SET_TABLE0);  // switch back to the normal instruction table
-  delayMicroseconds(30);
   this->command_(CMD_DISPLAY_ON);
-  delayMicroseconds(30);
   this->command_(CMD_CLEAR_DISPLAY);
   delay(2);
   this->command_(CMD_ENTRY_MODE_SET);
-  delayMicroseconds(30);
 }
 
 void ST7036Display::update() {
@@ -93,13 +90,16 @@ void ST7036Display::dump_config() {
 }
 
 // Each byte gets its own CS (enable/disable) pulse -- see the note in the
-// header on why this matters for the ST7036's serial shift register.
+// header on why this matters for the ST7036's serial shift register -- plus
+// a settle delay, since the controller needs time to process each write
+// before the next one arrives.
 void ST7036Display::command_(uint8_t value) {
   if (this->dc_pin_ != nullptr)
     this->dc_pin_->digital_write(false);
   this->enable();
   this->write_byte(value);
   this->disable();
+  delayMicroseconds(COMMAND_SETTLE_MICROS);
 }
 
 void ST7036Display::write_data_(uint8_t value) {
@@ -108,6 +108,7 @@ void ST7036Display::write_data_(uint8_t value) {
   this->enable();
   this->write_byte(value);
   this->disable();
+  delayMicroseconds(COMMAND_SETTLE_MICROS);
 }
 
 void ST7036Display::set_cursor_(uint8_t column, uint8_t row) {
@@ -120,15 +121,25 @@ void ST7036Display::set_cursor_(uint8_t column, uint8_t row) {
 }
 
 void ST7036Display::print(uint8_t column, uint8_t row, const char *str) {
-  if (row >= this->rows_)
+  if (row >= this->rows_ || column >= this->columns_)
     return;
 
   this->set_cursor_(column, row);
-  for (; *str != '\0' && column < this->columns_; str++, column++) {
-    this->write_data_(static_cast<uint8_t>(*str));
-    size_t pos = static_cast<size_t>(row) * this->columns_ + column;
+
+  // Space left in this row, starting from `column`. The loop below always
+  // fills exactly this many cells: characters from `str` first, then spaces
+  // for whatever remains. That means every print() call fully overwrites
+  // the row instead of leaving old, longer content behind, and a string
+  // that's too long is simply clipped at the row edge rather than spilling
+  // into the next line's DDRAM address.
+  const uint8_t available = this->columns_ - column;
+
+  for (uint8_t written = 0; written < available; written++) {
+    char c = (*str != '\0') ? *str++ : ' ';
+    this->write_data_(static_cast<uint8_t>(c));
+    size_t pos = static_cast<size_t>(row) * this->columns_ + column + written;
     if (pos < this->buffer_.size())
-      this->buffer_[pos] = static_cast<uint8_t>(*str);
+      this->buffer_[pos] = static_cast<uint8_t>(c);
   }
 }
 

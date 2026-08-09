@@ -35,8 +35,9 @@ class ST7036Display : public PollingComponent,
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR; }
 
-  /// Print text at the given column/row (0-indexed). Text is truncated at
-  /// the end of the row - it does not wrap to the next line.
+  /// Print text at the given column/row (0-indexed). Always writes the full
+  /// row: the string is truncated if it's too long, and padded with spaces
+  /// if it's shorter than the row, so old content never lingers on screen.
   void print(uint8_t column, uint8_t row, const char *str);
   void print(uint8_t column, uint8_t row, const std::string &str) { this->print(column, row, str.c_str()); }
   void print(const char *str) { this->print(0, 0, str); }
