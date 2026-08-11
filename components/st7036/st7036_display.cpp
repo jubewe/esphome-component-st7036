@@ -10,6 +10,10 @@ namespace st7036 {
 
 static const char *const TAG = "st7036";
 
+// Bump this string any time you want an unmistakable way to confirm, from
+// the boot log, exactly which build of this file ended up on the device.
+static const char *const DRIVER_BUILD_MARKER = "2026-08-09-explicit-address-per-char-fix";
+
 // --- ST7036 instruction bytes -------------------------------------------
 // Reference: Sitronix ST7036 datasheet, "Extension mode" instruction tables
 // 0 and 1 (EXT option pin tied low, which is how the EA DOGM series ships).
@@ -83,6 +87,7 @@ void ST7036Display::update() {
 
 void ST7036Display::dump_config() {
   ESP_LOGCONFIG(TAG, "ST7036 LCD:");
+  ESP_LOGCONFIG(TAG, "  Driver build: %s", DRIVER_BUILD_MARKER);
   ESP_LOGCONFIG(TAG, "  Dimensions: %ux%u", this->columns_, this->rows_);
   ESP_LOGCONFIG(TAG, "  Contrast: %u", this->contrast_);
   LOG_PIN("  DC Pin: ", this->dc_pin_);
@@ -124,18 +129,27 @@ void ST7036Display::print(uint8_t column, uint8_t row, const char *str) {
   if (row >= this->rows_ || column >= this->columns_)
     return;
 
-  this->set_cursor_(column, row);
-
   // Space left in this row, starting from `column`. The loop below always
   // fills exactly this many cells: characters from `str` first, then spaces
   // for whatever remains. That means every print() call fully overwrites
   // the row instead of leaving old, longer content behind, and a string
   // that's too long is simply clipped at the row edge rather than spilling
   // into the next line's DDRAM address.
+  //
+  // NOTE: we deliberately do NOT rely on the controller's DDRAM address
+  // auto-increment here. The ST7036 datasheet states that CSB falling
+  // resets "the shift register and the counter" in serial mode, and since
+  // command_()/write_data_() pulse CS around every single byte (required
+  // for reliable byte framing on this display), that may reset the DDRAM
+  // address counter too, not just the serial bit counter. So each
+  // character gets its own explicit "set DDRAM address" command instead of
+  // trusting auto-increment to have survived the CS pulse from the
+  // previous byte.
   const uint8_t available = this->columns_ - column;
 
   for (uint8_t written = 0; written < available; written++) {
     char c = (*str != '\0') ? *str++ : ' ';
+    this->set_cursor_(column + written, row);
     this->write_data_(static_cast<uint8_t>(c));
     size_t pos = static_cast<size_t>(row) * this->columns_ + column + written;
     if (pos < this->buffer_.size())
